@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 const SEARXNG_URL = "http://search.zvn.oreskovic.me";
@@ -19,13 +20,6 @@ interface SearXNGResponse {
 	suggestions?: string[];
 	corrections?: string[];
 }
-
-const CATEGORIES = [
-	"general", "web", "news", "images", "videos", "science",
-	"scientific publications", "it", "packages", "repos", "q&a",
-	"social media", "software wikis", "map", "weather", "translate",
-	"dictionaries", "define", "music", "files", "wikimedia",
-] as const;
 
 export default function searxngExtension(pi: ExtensionAPI) {
 	pi.registerTool({
@@ -123,7 +117,18 @@ Available categories (comma-separated for multiple):
 			}
 
 			const text = lines.join("\n").trim() || "No results found.";
-			return { content: [{ type: "text", text }] };
+			return { content: [{ type: "text", text }], details: { resultCount: results.length, query: params.query } };
+		},
+
+		renderCall(args, theme) {
+			const q = (args.query ?? "").slice(0, 50);
+			const cat = args.categories ? theme.fg("muted", ` [${args.categories}]`) : "";
+			return new Text(theme.fg("toolTitle", "search ") + theme.fg("accent", `"${q}"`) + cat, 0, 0);
+		},
+
+		renderResult(result, _opts, theme) {
+			const count = (result.details as any)?.resultCount ?? 0;
+			return new Text(theme.fg("success", `${count} result${count === 1 ? "" : "s"}`), 0, 0);
 		},
 	});
 }
