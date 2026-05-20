@@ -11,6 +11,14 @@
     "fetch"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oresk/pi-searxng.git"
+  },
+  "homepage": "https://github.com/oresk/pi-searxng",
+  "bugs": {
+    "url": "https://github.com/oresk/pi-searxng/issues"
+  },
   "pi": {
     "extensions": ["./searxng.ts", "./fetch-content.ts"]
   },
