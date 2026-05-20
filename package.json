@@ -1,0 +1,25 @@
+{
+  "name": "pi-searxng",
+  "version": "0.1.0",
+  "description": "Pi extensions for web search and page fetching via a self-hosted SearXNG instance",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "searxng",
+    "search",
+    "web-search",
+    "fetch"
+  ],
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./searxng.ts", "./fetch-content.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  }
+}
