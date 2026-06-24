@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-const SEARXNG_URL = "http://search.zvn.oreskovic.me";
+const SEARXNG_URL = process.env.SEARXNG_URL ?? "http://localhost:8080";
 
 interface SearXNGResult {
 	title: string;
