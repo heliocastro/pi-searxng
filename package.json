@@ -1,6 +1,6 @@
 {
   "name": "@oresk/pi-searxng",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Pi extension for web search via a self-hosted SearXNG instance",
   "type": "module",
   "keywords": [
@@ -19,7 +19,9 @@
     "url": "https://github.com/oresk/pi-searxng/issues"
   },
   "pi": {
-    "extensions": ["./searxng.ts"]
+    "extensions": [
+      "./searxng.ts"
+    ]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
