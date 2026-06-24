@@ -52,7 +52,7 @@ const CONFIG_TEMPLATE = `{
 }
 `;
 
-/** Strip JSONC comments (// and /* */) so the config can be parsed as JSON. */
+/** Strip JSONC comments (line and block) so the config can be parsed as JSON. */
 function stripJsonComments(raw: string): string {
 	let out = "";
 	let i = 0;
