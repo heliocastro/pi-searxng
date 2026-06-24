@@ -1,6 +1,6 @@
 {
   "name": "@oresk/pi-searxng",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pi extension for web search via a self-hosted SearXNG instance",
   "type": "module",
   "keywords": [

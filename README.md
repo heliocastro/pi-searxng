@@ -10,13 +10,38 @@ pi install @oresk/pi-searxng
 
 ## Configuration
 
-Set the `SEARXNG_URL` environment variable to point to your SearXNG instance:
+On first run, the extension creates a config file at:
+
+```
+~/.pi/agent/pi-searxng.jsonc
+```
+
+Edit it to configure your SearXNG instance and search preferences:
+
+```jsonc
+{
+  // SearXNG instance URL.
+  // Override with the SEARXNG_URL environment variable.
+  "searxngUrl": "https://search.yourdomain.com",
+
+  // Request timeout in milliseconds.
+  "timeoutMs": 30000,
+
+  // Maximum number of results per search (1–50).
+  "maxResults": 10,
+
+  // SafeSearch level: "off", "moderate", or "strict".
+  "safesearch": "off"
+}
+```
+
+The `SEARXNG_URL` environment variable takes priority over the config file:
 
 ```bash
 export SEARXNG_URL="https://search.yourdomain.com"
 ```
 
-If not set, it defaults to `http://localhost:8080` (a local SearXNG instance).
+If neither is set, it defaults to `http://localhost:8080`.
 
 ### Setting up SearXNG
 

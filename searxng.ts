@@ -1,8 +1,135 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
+import { Type, Value } from "typebox";
+import { homedir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
-const SEARXNG_URL = process.env.SEARXNG_URL ?? "http://localhost:8080";
+// ── Config ──────────────────────────────────────────────────────────────────
+
+const CONFIG_PATH = join(homedir(), ".pi", "agent", "pi-searxng.jsonc");
+
+interface SearXNGConfig {
+	searxngUrl: string;
+	timeoutMs: number;
+	maxResults: number;
+	safesearch: "off" | "moderate" | "strict";
+}
+
+const ConfigSchema = Type.Object(
+	{
+		searxngUrl: Type.String({ description: "SearXNG instance URL (e.g. http://localhost:8080)" }),
+		timeoutMs: Type.Number({ minimum: 1000, maximum: 120000, description: "Request timeout in milliseconds" }),
+		maxResults: Type.Number({ minimum: 1, maximum: 50, description: "Max results per search" }),
+		safesearch: Type.Union(
+			[Type.Literal("off"), Type.Literal("moderate"), Type.Literal("strict")],
+			{ description: 'SafeSearch level: "off", "moderate", or "strict"' },
+		),
+	},
+	{ additionalProperties: false },
+);
+
+const DEFAULT_CONFIG: SearXNGConfig = {
+	searxngUrl: "http://localhost:8080",
+	timeoutMs: 30000,
+	maxResults: 10,
+	safesearch: "off",
+};
+
+const CONFIG_TEMPLATE = `{
+	// SearXNG instance URL.
+	// Override with the SEARXNG_URL environment variable.
+	"searxngUrl": "http://localhost:8080",
+
+	// Request timeout in milliseconds.
+	"timeoutMs": 30000,
+
+	// Maximum number of results per search (1–50).
+	"maxResults": 10,
+
+	// SafeSearch level: "off", "moderate", or "strict".
+	"safesearch": "off"
+}
+`;
+
+/** Strip JSONC comments (// and /* */) so the config can be parsed as JSON. */
+function stripJsonComments(raw: string): string {
+	let out = "";
+	let i = 0;
+	while (i < raw.length) {
+		// String literal — keep verbatim
+		if (raw[i] === '"') {
+			out += '"';
+			i++;
+			while (i < raw.length && raw[i] !== '"') {
+				if (raw[i] === "\\" && i + 1 < raw.length) {
+					out += raw[i] + raw[i + 1];
+					i += 2;
+				} else {
+					out += raw[i];
+					i++;
+				}
+			}
+			if (i < raw.length) { out += '"'; i++; }
+			continue;
+		}
+		// Line comment
+		if (raw[i] === "/" && raw[i + 1] === "/") {
+			while (i < raw.length && raw[i] !== "\n") i++;
+			if (i < raw.length) { out += "\n"; i++; }
+			continue;
+		}
+		// Block comment
+		if (raw[i] === "/" && raw[i + 1] === "*") {
+			i += 2;
+			while (i + 1 < raw.length && !(raw[i] === "*" && raw[i + 1] === "/")) i++;
+			i += 2;
+			continue;
+		}
+		out += raw[i];
+		i++;
+	}
+	return out;
+}
+
+function loadConfig(): SearXNGConfig {
+	try {
+		mkdirSync(dirname(CONFIG_PATH), { recursive: true });
+	} catch { /* dir already exists */ }
+
+	if (!existsSync(CONFIG_PATH)) {
+		try {
+			writeFileSync(CONFIG_PATH, CONFIG_TEMPLATE, "utf-8");
+		} catch { /* read-only fs */ }
+		return DEFAULT_CONFIG;
+	}
+
+	try {
+		const raw = readFileSync(CONFIG_PATH, "utf-8");
+		const stripped = stripJsonComments(raw);
+		const parsed = JSON.parse(stripped);
+		const merged = { ...DEFAULT_CONFIG, ...parsed };
+
+		if (!Value.Check(ConfigSchema, merged)) {
+			const errors = [...Value.Errors(ConfigSchema, merged)].map((e) => `${e.path}: ${e.message}`).join("; ");
+			console.warn(`[pi-searxng] Invalid config (${CONFIG_PATH}): ${errors}. Using defaults.`);
+			return DEFAULT_CONFIG;
+		}
+
+		return merged as SearXNGConfig;
+	} catch (err) {
+		console.warn(
+			`[pi-searxng] Failed to parse config (${CONFIG_PATH}): ${
+				err instanceof Error ? err.message : String(err)
+			}. Using defaults.`,
+		);
+		return DEFAULT_CONFIG;
+	}
+}
+
+function resolveSearxngUrl(config: SearXNGConfig): string {
+	return process.env.SEARXNG_URL || config.searxngUrl;
+}
 
 interface SearXNGResult {
 	title: string;
@@ -22,6 +149,9 @@ interface SearXNGResponse {
 }
 
 export default function searxngExtension(pi: ExtensionAPI) {
+	const config = loadConfig();
+	const searxngUrl = resolveSearxngUrl(config);
+
 	pi.registerTool({
 		name: "web_search",
 		label: "SearXNG",
@@ -70,16 +200,24 @@ Available categories (comma-separated for multiple):
 			})),
 		}),
 		async execute(_toolCallId, params, signal) {
-			const url = new URL(`${SEARXNG_URL}/search`);
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(new Error("SearXNG request timed out")), config.timeoutMs);
+			if (signal) {
+				signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
+			}
+
+			const url = new URL(`${searxngUrl}/search`);
 			url.searchParams.set("q", params.query);
 			url.searchParams.set("format", "json");
 			url.searchParams.set("categories", params.categories ?? "general");
+			url.searchParams.set("safesearch", String(config.safesearch === "moderate" ? 1 : config.safesearch === "strict" ? 2 : 0));
 			if (params.language) url.searchParams.set("language", params.language);
 			if (params.timeRange) url.searchParams.set("time_range", params.timeRange);
 			if (params.page && params.page > 1) url.searchParams.set("pageno", String(params.page));
 			if (params.engines) url.searchParams.set("engines", params.engines);
 
-			const res = await fetch(url.toString(), { signal });
+			const res = await fetch(url.toString(), { signal: controller.signal });
+			clearTimeout(timeout);
 			if (!res.ok) throw new Error(`SearXNG error: ${res.status} ${res.statusText}`);
 
 			const data = (await res.json()) as SearXNGResponse;
