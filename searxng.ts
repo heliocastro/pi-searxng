@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { Type, Value } from "typebox";
+import { Type } from "typebox";
+import { Check, Errors } from "typebox/value";
 import { homedir } from "node:os";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -110,9 +111,9 @@ function loadConfig(): SearXNGConfig {
 		const parsed = JSON.parse(stripped);
 		const merged = { ...DEFAULT_CONFIG, ...parsed };
 
-		if (!Value.Check(ConfigSchema, merged)) {
-			const errors = [...Value.Errors(ConfigSchema, merged)].map((e) => `${e.path}: ${e.message}`).join("; ");
-			console.warn(`[pi-searxng] Invalid config (${CONFIG_PATH}): ${errors}. Using defaults.`);
+		if (!Check(ConfigSchema, merged)) {
+			const errorList = [...Errors(ConfigSchema, merged)].map((e) => `${e.path}: ${e.message}`).join("; ");
+			console.warn(`[pi-searxng] Invalid config (${CONFIG_PATH}): ${errorList}. Using defaults.`);
 			return DEFAULT_CONFIG;
 		}
 
