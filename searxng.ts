@@ -5,6 +5,7 @@ import { Check, Errors } from "typebox/value";
 import { homedir } from "node:os";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { Agent } from "node:https";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -15,16 +16,41 @@ interface SearXNGConfig {
 	timeoutMs: number;
 	maxResults: number;
 	safesearch: "off" | "moderate" | "strict";
+	// mTLS certificate paths (optional)
+	mtlsCert: string;
+	mtlsKey: string;
+	mtlsCa: string;
 }
 
 const ConfigSchema = Type.Object(
 	{
-		searxngUrl: Type.String({ description: "SearXNG instance URL (e.g. http://localhost:8080)" }),
-		timeoutMs: Type.Number({ minimum: 1000, maximum: 120000, description: "Request timeout in milliseconds" }),
-		maxResults: Type.Number({ minimum: 1, maximum: 50, description: "Max results per search" }),
+		searxngUrl: Type.String({
+			description: "SearXNG instance URL (e.g. http://localhost:8080)",
+		}),
+		timeoutMs: Type.Number({
+			minimum: 1000,
+			maximum: 120000,
+			description: "Request timeout in milliseconds",
+		}),
+		maxResults: Type.Number({
+			minimum: 1,
+			maximum: 50,
+			description: "Max results per search",
+		}),
 		safesearch: Type.Union(
 			[Type.Literal("off"), Type.Literal("moderate"), Type.Literal("strict")],
 			{ description: 'SafeSearch level: "off", "moderate", or "strict"' },
+		),
+		mtlsCert: Type.Optional(
+			Type.String({ description: "Path to client TLS certificate for mTLS" }),
+		),
+		mtlsKey: Type.Optional(
+			Type.String({ description: "Path to client TLS private key for mTLS" }),
+		),
+		mtlsCa: Type.Optional(
+			Type.String({
+				description: "Path to CA certificate for verifying the server",
+			}),
 		),
 	},
 	{ additionalProperties: false },
@@ -35,6 +61,9 @@ const DEFAULT_CONFIG: SearXNGConfig = {
 	timeoutMs: 30000,
 	maxResults: 10,
 	safesearch: "off",
+	mtlsCert: "",
+	mtlsKey: "",
+	mtlsCa: "",
 };
 
 const CONFIG_TEMPLATE = `{
@@ -49,7 +78,14 @@ const CONFIG_TEMPLATE = `{
 	"maxResults": 10,
 
 	// SafeSearch level: "off", "moderate", or "strict".
-	"safesearch": "off"
+	"safesearch": "off",
+
+	// ── mTLS (mutual TLS) ────────────────────────────────────────────────
+	// Set these paths to authenticate with a SearXNG instance that requires
+	// client certificates. Override with SEARXNG_CERT, SEARXNG_KEY, SEARXNG_CA.
+	// "mtlsCert": "/path/to/client-cert.pem",
+	// "mtlsKey":  "/path/to/client-key.pem",
+	// "mtlsCa":   "/path/to/ca-cert.pem"
 }
 `;
 
@@ -71,13 +107,19 @@ function stripJsonComments(raw: string): string {
 					i++;
 				}
 			}
-			if (i < raw.length) { out += '"'; i++; }
+			if (i < raw.length) {
+				out += '"';
+				i++;
+			}
 			continue;
 		}
 		// Line comment
 		if (raw[i] === "/" && raw[i + 1] === "/") {
 			while (i < raw.length && raw[i] !== "\n") i++;
-			if (i < raw.length) { out += "\n"; i++; }
+			if (i < raw.length) {
+				out += "\n";
+				i++;
+			}
 			continue;
 		}
 		// Block comment
@@ -96,12 +138,16 @@ function stripJsonComments(raw: string): string {
 function loadConfig(): SearXNGConfig {
 	try {
 		mkdirSync(dirname(CONFIG_PATH), { recursive: true });
-	} catch { /* dir already exists */ }
+	} catch {
+		/* dir already exists */
+	}
 
 	if (!existsSync(CONFIG_PATH)) {
 		try {
 			writeFileSync(CONFIG_PATH, CONFIG_TEMPLATE, "utf-8");
-		} catch { /* read-only fs */ }
+		} catch {
+			/* read-only fs */
+		}
 		return DEFAULT_CONFIG;
 	}
 
@@ -112,8 +158,12 @@ function loadConfig(): SearXNGConfig {
 		const merged = { ...DEFAULT_CONFIG, ...parsed };
 
 		if (!Check(ConfigSchema, merged)) {
-			const errorList = [...Errors(ConfigSchema, merged)].map((e) => `${e.path}: ${e.message}`).join("; ");
-			console.warn(`[pi-searxng] Invalid config (${CONFIG_PATH}): ${errorList}. Using defaults.`);
+			const errorList = [...Errors(ConfigSchema, merged)]
+				.map((e) => `${e.path}: ${e.message}`)
+				.join("; ");
+			console.warn(
+				`[pi-searxng] Invalid config (${CONFIG_PATH}): ${errorList}. Using defaults.`,
+			);
 			return DEFAULT_CONFIG;
 		}
 
@@ -130,6 +180,48 @@ function loadConfig(): SearXNGConfig {
 
 function resolveSearxngUrl(config: SearXNGConfig): string {
 	return process.env.SEARXNG_URL || config.searxngUrl;
+}
+
+function resolveMtlsCert(config: SearXNGConfig): string {
+	return process.env.SEARXNG_CERT || config.mtlsCert;
+}
+
+function resolveMtlsKey(config: SearXNGConfig): string {
+	return process.env.SEARXNG_KEY || config.mtlsKey;
+}
+
+function resolveMtlsCa(config: SearXNGConfig): string {
+	return process.env.SEARXNG_CA || config.mtlsCa;
+}
+
+/** Build an https.Agent for mTLS when cert + key are configured. */
+function createMtlsAgent(config: SearXNGConfig): Agent | undefined {
+	const certPath = resolveMtlsCert(config);
+	const keyPath = resolveMtlsKey(config);
+	const caPath = resolveMtlsCa(config);
+
+	if (!certPath || !keyPath) return undefined;
+
+	const agentOpts: { cert?: string; key?: string; ca?: string } = {};
+
+	if (certPath && existsSync(certPath)) {
+		agentOpts.cert = readFileSync(certPath, "utf-8");
+	}
+	if (keyPath && existsSync(keyPath)) {
+		agentOpts.key = readFileSync(keyPath, "utf-8");
+	}
+	if (caPath && existsSync(caPath)) {
+		agentOpts.ca = readFileSync(caPath, "utf-8");
+	}
+
+	if (!agentOpts.cert || !agentOpts.key) {
+		console.warn(
+			"[pi-searxng] mTLS cert or key not found — falling back to plain TLS.",
+		);
+		return undefined;
+	}
+
+	return new Agent(agentOpts);
 }
 
 interface SearXNGResult {
@@ -152,6 +244,7 @@ interface SearXNGResponse {
 export default function searxngExtension(pi: ExtensionAPI) {
 	const config = loadConfig();
 	const searxngUrl = resolveSearxngUrl(config);
+	const mtlsAgent = createMtlsAgent(config);
 
 	pi.registerTool({
 		name: "web_search",
@@ -178,48 +271,91 @@ Available categories (comma-separated for multiple):
 - music      — bandcamp, soundcloud, youtube
 - files      — piratebay, solidtorrents
 - wikimedia  — wiktionary, wikinews`,
-		promptSnippet: "Search the web with SearXNG (self-hosted, multi-engine aggregator)",
+		promptSnippet:
+			"Search the web with SearXNG (self-hosted, multi-engine aggregator)",
 		parameters: Type.Object({
-			query: Type.String({ description: "Search query. Supports engine-specific syntax (e.g. site:, filetype:)." }),
-			categories: Type.Optional(Type.String({
-				description: 'Category or comma-separated categories (default: "general"). See tool description for full list.',
-			})),
-			language: Type.Optional(Type.String({
-				description: 'Language code for results, e.g. "en", "hr", "de" (default: instance setting)',
-			})),
-			timeRange: Type.Optional(Type.String({
-				description: 'Recency filter: "day", "month", or "year"',
-			})),
-			page: Type.Optional(Type.Integer({
-				description: "Page number for more results (default: 1)",
-			})),
-			engines: Type.Optional(Type.String({
-				description: 'Comma-separated engines to use, e.g. "google,duckduckgo,github". Overrides category defaults.',
-			})),
-			numResults: Type.Optional(Type.Integer({
-				description: "Max results to return (default: 10, max: 20)",
-			})),
+			query: Type.String({
+				description:
+					"Search query. Supports engine-specific syntax (e.g. site:, filetype:).",
+			}),
+			categories: Type.Optional(
+				Type.String({
+					description:
+						'Category or comma-separated categories (default: "general"). See tool description for full list.',
+				}),
+			),
+			language: Type.Optional(
+				Type.String({
+					description:
+						'Language code for results, e.g. "en", "hr", "de" (default: instance setting)',
+				}),
+			),
+			timeRange: Type.Optional(
+				Type.String({
+					description: 'Recency filter: "day", "month", or "year"',
+				}),
+			),
+			page: Type.Optional(
+				Type.Integer({
+					description: "Page number for more results (default: 1)",
+				}),
+			),
+			engines: Type.Optional(
+				Type.String({
+					description:
+						'Comma-separated engines to use, e.g. "google,duckduckgo,github". Overrides category defaults.',
+				}),
+			),
+			numResults: Type.Optional(
+				Type.Integer({
+					description: "Max results to return (default: 10, max: 20)",
+				}),
+			),
 		}),
 		async execute(_toolCallId, params, signal) {
 			const controller = new AbortController();
-			const timeout = setTimeout(() => controller.abort(new Error("SearXNG request timed out")), config.timeoutMs);
+			const timeout = setTimeout(
+				() => controller.abort(new Error("SearXNG request timed out")),
+				config.timeoutMs,
+			);
 			if (signal) {
-				signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
+				signal.addEventListener(
+					"abort",
+					() => controller.abort(signal.reason),
+					{ once: true },
+				);
 			}
 
 			const url = new URL(`${searxngUrl}/search`);
 			url.searchParams.set("q", params.query);
 			url.searchParams.set("format", "json");
 			url.searchParams.set("categories", params.categories ?? "general");
-			url.searchParams.set("safesearch", String(config.safesearch === "moderate" ? 1 : config.safesearch === "strict" ? 2 : 0));
+			url.searchParams.set(
+				"safesearch",
+				String(
+					config.safesearch === "moderate"
+						? 1
+						: config.safesearch === "strict"
+							? 2
+							: 0,
+				),
+			);
 			if (params.language) url.searchParams.set("language", params.language);
-			if (params.timeRange) url.searchParams.set("time_range", params.timeRange);
-			if (params.page && params.page > 1) url.searchParams.set("pageno", String(params.page));
+			if (params.timeRange)
+				url.searchParams.set("time_range", params.timeRange);
+			if (params.page && params.page > 1)
+				url.searchParams.set("pageno", String(params.page));
 			if (params.engines) url.searchParams.set("engines", params.engines);
 
-			const res = await fetch(url.toString(), { signal: controller.signal });
+			const fetchOpts: RequestInit = { signal: controller.signal };
+			// Attach mTLS agent for https requests
+			if (mtlsAgent && searxngUrl.startsWith("https://")) {
+				(fetchOpts as any).agent = () => mtlsAgent;
+			}
+			const res = await fetch(url.toString(), fetchOpts);
 			clearTimeout(timeout);
-			if (!res.ok) throw new Error(`SearXNG error: ${res.status} ${res.statusText}`);
+			if (!res.ok)
+				throw new Error(`SearXNG error: ${res.status} ${res.statusText}`);
 
 			const data = (await res.json()) as SearXNGResponse;
 			const limit = Math.min(params.numResults ?? 10, 20);
@@ -244,7 +380,9 @@ Available categories (comma-separated for multiple):
 				const r = results[i];
 				const engines = r.engines?.length ? ` _(${r.engines.join(", ")})_` : "";
 				const score = r.score != null ? ` [score: ${r.score.toFixed(2)}]` : "";
-				const date = r.publishedDate ? ` · ${r.publishedDate.slice(0, 10)}` : "";
+				const date = r.publishedDate
+					? ` · ${r.publishedDate.slice(0, 10)}`
+					: "";
 				lines.push(`${i + 1}. **${r.title}**${date}${engines}${score}`);
 				lines.push(`   ${r.url}`);
 				if (r.content) lines.push(`   ${r.content.slice(0, 400)}`);
@@ -252,22 +390,37 @@ Available categories (comma-separated for multiple):
 			}
 
 			if (data.suggestions?.length) {
-				lines.push(`**Related searches:** ${data.suggestions.slice(0, 5).join(" · ")}`);
+				lines.push(
+					`**Related searches:** ${data.suggestions.slice(0, 5).join(" · ")}`,
+				);
 			}
 
 			const text = lines.join("\n").trim() || "No results found.";
-			return { content: [{ type: "text", text }], details: { resultCount: results.length, query: params.query } };
+			return {
+				content: [{ type: "text", text }],
+				details: { resultCount: results.length, query: params.query },
+			};
 		},
 
 		renderCall(args, theme) {
 			const q = (args.query ?? "").slice(0, 50);
-			const cat = args.categories ? theme.fg("muted", ` [${args.categories}]`) : "";
-			return new Text(theme.fg("toolTitle", "search ") + theme.fg("accent", `"${q}"`) + cat, 0, 0);
+			const cat = args.categories
+				? theme.fg("muted", ` [${args.categories}]`)
+				: "";
+			return new Text(
+				theme.fg("toolTitle", "search ") + theme.fg("accent", `"${q}"`) + cat,
+				0,
+				0,
+			);
 		},
 
 		renderResult(result, _opts, theme) {
 			const count = (result.details as any)?.resultCount ?? 0;
-			return new Text(theme.fg("success", `${count} result${count === 1 ? "" : "s"}`), 0, 0);
+			return new Text(
+				theme.fg("success", `${count} result${count === 1 ? "" : "s"}`),
+				0,
+				0,
+			);
 		},
 	});
 }
