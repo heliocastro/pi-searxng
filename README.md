@@ -1,11 +1,11 @@
-# @oresk/pi-searxng
+# @heliocastro/pi-searxng
 
 Pi extension that adds a `web_search` tool backed by a self-hosted [SearXNG](https://docs.searxng.org/) instance — a privacy-respecting meta search engine aggregating results from multiple engines.
 
 ## Install
 
 ```bash
-pi install @oresk/pi-searxng
+pi install @heliocastro/pi-searxng
 ```
 
 ## Configuration

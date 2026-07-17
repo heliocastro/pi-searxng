@@ -1,3 +1,8 @@
+// SPDX-FileCopyrightText: 2026 Copyright (c) 2026 Lovro Oreskovic
+// SPDX-FileCopyrightText: 2026 Copyright (c) 2028 Helio Chissini de Castro
+//
+// SPDX-License-Identifier: MIT
+
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";

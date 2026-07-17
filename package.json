@@ -1,6 +1,6 @@
 {
   "name": "@heliocastro/pi-searxng",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Pi extension for web search via a self-hosted SearXNG instance",
   "type": "module",
   "keywords": [
