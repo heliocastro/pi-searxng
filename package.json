@@ -1,6 +1,6 @@
 {
-  "name": "@oresk/pi-searxng",
-  "version": "0.2.1",
+  "name": "@heliocastro/pi-searxng",
+  "version": "0.3.0",
   "description": "Pi extension for web search via a self-hosted SearXNG instance",
   "type": "module",
   "keywords": [
@@ -12,11 +12,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/oresk/pi-searxng.git"
+    "url": "git+https://github.com/heliocastro/pi-searxng.git"
   },
-  "homepage": "https://github.com/oresk/pi-searxng",
+  "homepage": "https://github.com/heliocastro/pi-searxng",
   "bugs": {
-    "url": "https://github.com/oresk/pi-searxng/issues"
+    "url": "https://github.com/heliocastro/pi-searxng/issues"
   },
   "pi": {
     "extensions": [
@@ -33,7 +33,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "publishConfig": {
     "access": "public"
