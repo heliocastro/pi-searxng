@@ -5,12 +5,20 @@
 #   2. node  — runs the actual searxng.ts extension via the harness.
 set -uo pipefail
 
+SEARXNG_CERT=${SEARXNG_CERT:-}
+SEARXNG_KEY=${SEARXNG_KEY:-}
+SEARXNG_CA=${SEARXNG_CA:-}
+
 QUERY="${1:-hello world}"
 
 echo "════════════════════════════════════════════════════════════"
 echo " 1) curl (ground truth — definitely sends client cert)"
 echo "════════════════════════════════════════════════════════════"
-curl -sS --cert "$SEARXNG_CERT" --key "$SEARXNG_KEY" --cacert "$SEARXNG_CA" \
+curl_args=(--cert "$SEARXNG_CERT" --key "$SEARXNG_KEY")
+if [ -n "$SEARXNG_CA" ]; then
+	curl_args+=(--cacert "$SEARXNG_CA")
+fi
+curl -sS "${curl_args[@]}" \
   -w "\n[curl] HTTP %{http_code}\n" \
   "$SEARXNG_URL/search?q=$(printf '%s' "$QUERY" | sed 's/ /+/g')&format=json&categories=general&safesearch=0" \
   | head -30

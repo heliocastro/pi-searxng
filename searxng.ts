@@ -10,7 +10,7 @@ import { Check, Errors } from "typebox/value";
 import { homedir } from "node:os";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { Agent } from "node:https";
+import { Agent, fetch } from "undici";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -199,7 +199,16 @@ function resolveMtlsCa(config: SearXNGConfig): string {
 	return process.env.SEARXNG_CA || config.mtlsCa;
 }
 
-/** Build an https.Agent for mTLS when cert + key are configured. */
+/**
+ * Build an undici Agent for mTLS when cert + key are configured.
+ *
+ * Node's global `fetch` is undici under the hood, and undici's fetch ignores
+ * the classic `node:https` `agent` option entirely — client certs never get
+ * sent. The dispatcher must be an undici `Agent` passed via the `dispatcher`
+ * fetch option, so both the Agent and `fetch` here are imported from `undici`
+ * directly (mixing a standalone undici Agent with Node's internally bundled
+ * undici fetch throws on version mismatch).
+ */
 function createMtlsAgent(config: SearXNGConfig): Agent | undefined {
 	const certPath = resolveMtlsCert(config);
 	const keyPath = resolveMtlsKey(config);
@@ -207,26 +216,26 @@ function createMtlsAgent(config: SearXNGConfig): Agent | undefined {
 
 	if (!certPath || !keyPath) return undefined;
 
-	const agentOpts: { cert?: string; key?: string; ca?: string } = {};
+	const connectOpts: { cert?: string; key?: string; ca?: string } = {};
 
 	if (certPath && existsSync(certPath)) {
-		agentOpts.cert = readFileSync(certPath, "utf-8");
+		connectOpts.cert = readFileSync(certPath, "utf-8");
 	}
 	if (keyPath && existsSync(keyPath)) {
-		agentOpts.key = readFileSync(keyPath, "utf-8");
+		connectOpts.key = readFileSync(keyPath, "utf-8");
 	}
 	if (caPath && existsSync(caPath)) {
-		agentOpts.ca = readFileSync(caPath, "utf-8");
+		connectOpts.ca = readFileSync(caPath, "utf-8");
 	}
 
-	if (!agentOpts.cert || !agentOpts.key) {
+	if (!connectOpts.cert || !connectOpts.key) {
 		console.warn(
 			"[pi-searxng] mTLS cert or key not found — falling back to plain TLS.",
 		);
 		return undefined;
 	}
 
-	return new Agent(agentOpts);
+	return new Agent({ connect: connectOpts });
 }
 
 interface SearXNGResult {
@@ -352,10 +361,12 @@ Available categories (comma-separated for multiple):
 				url.searchParams.set("pageno", String(params.page));
 			if (params.engines) url.searchParams.set("engines", params.engines);
 
-			const fetchOpts: RequestInit = { signal: controller.signal };
-			// Attach mTLS agent for https requests
+			const fetchOpts: Parameters<typeof fetch>[1] = {
+				signal: controller.signal,
+			};
+			// Attach mTLS dispatcher for https requests
 			if (mtlsAgent && searxngUrl.startsWith("https://")) {
-				(fetchOpts as any).agent = () => mtlsAgent;
+				fetchOpts.dispatcher = mtlsAgent;
 			}
 			const res = await fetch(url.toString(), fetchOpts);
 			clearTimeout(timeout);
